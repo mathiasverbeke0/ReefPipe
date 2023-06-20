@@ -61,7 +61,7 @@ parser <- ArgumentParser(description = 'Reefpipe command line arguments')   # In
 parser$add_argument('-b', '--base_dir', metavar = 'BASEDIR', type = 'character', required = TRUE, help = 'Specify the base directory path for the analysis.')
 parser$add_argument('-d', '--download', metavar = 'FILENAME', required = FALSE, help = 'Download data from ENA for the given accessions listed in FILENAME.')
 parser$add_argument('-r', '--run_mode', choices = c('single', 'multi'), required = TRUE, help = 'Specify the run mode: \'single\' for analyzing a single sequencing run or \'multi\' for analyzing multiple runs.')
-parser$add_argument('-g', '--gene', choices = c('COI', 'ITS'), required = TRUE, help = 'Specify the gene to analyze.')
+parser$add_argument('-g', '--gene', choices = c('COI', 'ITS', '18S'), required = TRUE, help = 'Specify the gene to analyze.')
 
 # Primer removal arguments
 parser$add_argument('-t', '--trim_primers', action = 'store_true', help = 'Enable primer trimming using cutadapt. By default, primers are not trimmed.')
@@ -181,10 +181,20 @@ print_header(2)
     stop('If --trim_primers is specified, --primers must also be specified.')
   }
 
+  if(GOI %in% c('ITS', '18S')){
+    trunclen = 0
+    cat('trunclen has been disabled.\n')
+  }
+
 
   ######################
   ## BOLDIGGER CHECKS ##
   ######################
+  # Check if BOLDSYSTEMS contains can be used for the gene of interest
+  if(boldigger & GOI == '18S'){
+    boldigger = F
+    cat('BOLDigger has been disabled.\n')
+  }
   
   # Check if BOLDigger username and password was provided
   if(boldigger & (is.null(password) | is.null(user))){
@@ -524,18 +534,42 @@ for(iter in 1:length(paths)){
     FWD <- primers[1] 
     REV <- primers[2]
     
-    FWD.argument <- paste0('-g', ' ^', FWD)
-    REV.argument <- paste0('-G', ' ^', REV)
+    # If the gene of interest is COI
+    if(GOI == 'COI'){
+      FWD.argument <- paste0('-g', ' ^', FWD)
+      REV.argument <- paste0('-G', ' ^', REV)
+      
+      # Run cutadapt
+      for(i in seq_along(FwdRead)){
+        system2('cutadapt', args = c(FWD.argument,                                                                      # Define the forward primer
+                                     REV.argument,                                                                      # Define the reverse primer
+                                     '-m 1',                                                                            # Only keep reads with a minimal length of 1,
+                                     '-e', cutadapt_error_rate,
+                                     '--discard-untrimmed',                                                             # Discard reads that were not trimmed
+                                     '-o', paste0("\"", FwdRead.cut[i], "\""), '-p', paste0("\"",RevRead.cut[i], "\""), # Output files
+                                     paste0("\"", FwdRead[i], "\""), paste0("\"", RevRead[i], "\"")))                   # Input files
+      }
+    }
     
-    # Run cutadapt
-    for(i in seq_along(FwdRead)){
-      system2('cutadapt', args = c(FWD.argument,                                                                      # Define the forward read
-                                   REV.argument,                                                                      # Define the reverse read
-                                   '-m 1',                                                                            # Only keep reads with a minimal length of 1,
-                                   '-e', cutadapt_error_rate,
-                                   '--discard-untrimmed',                                                             # Discard reads that were not trimmed
-                                   '-o', paste0("\"", FwdRead.cut[i], "\""), '-p', paste0("\"",RevRead.cut[i], "\""), # Output files
-                                   paste0("\"", FwdRead[i], "\""), paste0("\"", RevRead[i], "\"")))                   # Input files
+    # If the gene of interest is ITS or 18S rRNA
+    else if (GOI %in% c('ITS', '18S')){
+      FWD.RC <- dada2::rc(FWD)
+      REV.RC <- dada2::rc(REV)
+      
+      FWD.argument <- paste0('-g', ' ^', FWD, ' -a ', REV.RC)
+      REV.argument <- paste0('-G', ' ^', REV, ' -A ', FWD.RC)
+      
+      # Run cutadapt
+      for(i in seq_along(FwdRead)){
+        system2('cutadapt', args = c(FWD.argument,                                                                      # Define the forward arguments
+                                     REV.argument,                                                                      # Define the reverse arguments
+                                     '-m 1',                                                                            # Only keep reads with a minimal length of 1,
+                                     '-n 2',                                                                            # Required to remove FWD and REV from reads
+                                     '-e', cutadapt_error_rate,
+                                     '--discard-untrimmed',                                                             # Discard reads that were not trimmed
+                                     '-o', paste0("\"", FwdRead.cut[i], "\""), '-p', paste0("\"",RevRead.cut[i], "\""), # Output files
+                                     paste0("\"", FwdRead[i], "\""), paste0("\"", RevRead[i], "\"")))                   # Input files
+      }
     }
   }
   
@@ -647,7 +681,7 @@ for(iter in 1:length(paths)){
                        RevRead.cut,                            # Input files reverse reads
                        RevRead.filt,                           # Output files reverse reads
                        truncLen= trunclen,                     # Max length of the reads (F will be truncated to 200, reverse to 140)
-                       maxN= max_ambiguous,                    # Amount of ambiguous reads that are allowed
+                       maxN= max_ambiguous,                    # Amount of ambiguous bases per read that are allowed
                        maxEE= max_error_rates,                 # Maximum error rates for F and R read
                        truncQ= min_quality_score,              # Minimum quality score that each base should have
                        minLen = minlen,                        # Minimum length of the reads after trimming
@@ -657,7 +691,7 @@ for(iter in 1:length(paths)){
   
   saveRDS(out, file.path(path.filt, 'Filtered_Trimmed_Logfile.rds'))
   
-  
+  ??filterAndTrim
   ####################################################
   ## INSPECT READ QUALITY PROFILES OF TRIMMED READS ##
   ####################################################
