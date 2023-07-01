@@ -88,6 +88,7 @@ parser$add_argument('-s', '--singleton', action = 'store_false', help = 'Keep si
 parser$add_argument('-B', '--BOLDigger', action = 'store_true', help = 'Perform taxonomic classification using BOLDigger.')
 parser$add_argument('-U', '--user', type = 'character', required = FALSE, help = 'Specify the BOLDSYSTEMS user ID.')
 parser$add_argument('-P', '--password', type = 'character', required = FALSE, help = 'Specify the BOLDSYSTEMS password.')
+parser$add_argument('-S', '--batch_size', type = 'numeric', required = FALSE, default = 50, help = 'Specify the BOLDigger batch size.')
 parser$add_argument('-R', '--reference', action = 'store_true', help = 'Perform taxonomic classification with DADA2 using custom reference databases.')
 parser$add_argument('-M', '--minBoot', type = 'numeric', default = 80, help = 'Specify the minimal bootstrap value for taxonomic classification with DADA2. Default is 80.')
 
@@ -123,6 +124,7 @@ contaminants <- args$contaminants
 compress <- args$compress
 min_overlap <- args$min_overlap
 max_mismatch <- args$max_mismatch
+batch_size <- args$batch_size
 
 
 #################
@@ -199,6 +201,11 @@ print_header(2)
   # Check if BOLDigger username and password was provided
   if(boldigger & (is.null(password) | is.null(user))){
     stop('If --BOLDigger is specified, --user and --password also need to be specified.')
+  }
+
+  # Check if the BOLDigger batch_size is between 1 and 50
+  if(boldigger & (batch_size < 1 | batch_size > 50)){
+    stop('The BOLDigger batch size must be between 0 and 50.') 
   }
 
   # Check if connection to BOLDSYSTEMS is possible 
@@ -455,6 +462,9 @@ print_header(5)
 # Construct comprehensive sequence table
 main.seqtab <- NULL
 
+# Construct a comprehensive read track table
+main.track <- NULL
+
 for(iter in 1:length(paths)){
   
   
@@ -691,7 +701,6 @@ for(iter in 1:length(paths)){
   
   saveRDS(out, file.path(path.filt, 'Filtered_Trimmed_Logfile.rds'))
   
-  ??filterAndTrim
   ####################################################
   ## INSPECT READ QUALITY PROFILES OF TRIMMED READS ##
   ####################################################
@@ -760,8 +769,6 @@ for(iter in 1:length(paths)){
   
   errF <- learnErrors(FwdRead.filt, multithread=TRUE)
   errR <- learnErrors(RevRead.filt, multithread=TRUE)
-  
-   
   
   # Construct and store the error plots
   suppressWarnings({
@@ -889,11 +896,41 @@ for(iter in 1:length(paths)){
   colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "seqtab")
   rownames(track) <- sample.names
   
-  write.table(x = track, file = file.path(paths[iter], 'summary.txt'))
+  
+  # Add the read track to the main read track 
+  if(is.null(main.track)){
+    main.track <- track
+  } else{
+    main.track <- rbind(main.track, track)
+  }
   
   # Remove the unfiltered .fastq.gz files
   unlink(c(FwdRead, RevRead))
 }
+
+
+#######################
+## STORE MAIN SEQTAB ##
+#######################
+
+# Make directory path to store all results
+path.result <- file.path(trialpath, 'Results')
+
+if(!dir.exists(path.result)){
+  cat(paste('Creating output directory:', path.result, '\n'))
+  dir.create(path.result)
+}
+
+# Make directory to store all ASV sequence information
+path.asv_sequence <- file.path(path.result, '01.ASV')
+
+if(!dir.exists(path.asv_sequence)){
+  cat(paste('Creating output directory:', path.asv_sequence, '\n'))
+  dir.create(path.asv_sequence)
+}
+
+# Store main seqtab table
+saveRDS(main.seqtab, file.path(path.asv_sequence, 'seqtab.rds'))
 
 
 #####################
@@ -913,7 +950,18 @@ print_header(6)
   # Remove chimeras
   seqtab.nochim <- removeBimeraDenovo(main.seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
   
-  # Remove singletons
+  # Store seqtab.nochim
+  saveRDS(seqtab.nochim, file.path(path.asv_sequence, 'seqtab_nochim.rds'))
+  
+  # Update the main.track table
+  main.track <- cbind(main.track, rowSums(seqtab.nochim))
+  colnames(main.track)[ncol(main.track)] <- "seqtab_nochim"
+  
+  
+  #######################
+  ## Remove singletons ##
+  #######################
+  
   if (singleton == T & dim(seqtab.nochim)[1] > 1){
     
     # Message
@@ -921,10 +969,19 @@ print_header(6)
     cat(paste0('\n[', 'step ', step, '] Removing singletons\n'))
     
     mode(seqtab.nochim) = 'numeric'
-    seqtab.nochim <- seqtab.nochim[,colSums(seqtab.nochim) > 1]
+    seqtab.nochim <- seqtab.nochim[,colSums(seqtab.nochim) > 1, drop = F]
+    
+    # Store seqtab.nochim without singletons
+    saveRDS(seqtab.nochim, file.path(path.asv_sequence, 'seqtab_nochim_nosingle.rds'))
+    
+    # Update the main.track table
+    main.track <- cbind(main.track, rowSums(seqtab.nochim))
+    colnames(main.track)[ncol(main.track)] <- "seqtab_nochim_nosingle"
   }
   
-  # If there are no sequences in the sequence table, continue
+  write.table(x = main.track, file = file.path(path.asv_sequence, 'summary.txt'))
+  
+  # If there are no sequences in the sequence table, stop
   if(dim(seqtab.nochim)[2] == 0){
     stop('\nASV sequences could not be generated.')
   }
@@ -941,22 +998,6 @@ print_header(6)
   
   # Combine ASV sequences and headers
   asv_fasta <- c(rbind(asv_headers, asv_seqs))
-  
-  # Make directory path to store all results
-  path.result <- file.path(trialpath, 'Results')
-  
-  if(!dir.exists(path.result)){
-    cat(paste('Creating output directory:', path.result, '\n'))
-    dir.create(path.result)
-  }
-  
-  # Make directory to store all ASV sequence information
-  path.asv_sequence <- file.path(path.result, '01.ASV')
-  
-  if(!dir.exists(path.asv_sequence)){
-    cat(paste('Creating output directory:', path.asv_sequence, '\n'))
-    dir.create(path.asv_sequence)
-  }
   
   # Write ASV sequences and headers to a text (i.e. multifasta) and rds file
   write(asv_fasta, file.path(path.asv_sequence, paste0(GOI, '_ASV.fasta')))
@@ -1139,7 +1180,8 @@ if((reference == T | boldigger == T) & length(paths) > 0){
                                                   paste0("\"", user, "\""), 
                                                   paste0("\"", password, "\""), 
                                                   paste0("\"", path.ASV2, "\""), 
-                                                  paste0("\"", path.taxon, "\"")))
+                                                  paste0("\"", path.taxon, "\""),
+                                                  batch_size))
     
     # Get the file names in the Taxonomy directory (not recursive!)
     files <- list.files(path = path.taxon, full.names = T)
