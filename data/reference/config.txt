@@ -1,6 +1,2 @@
 Database,TaxonomicLevel
-MIDORI2_COI_LONGEST_MARINE_SPECIES_SUBSET1.fasta,phylum;class;order;family;genus;species
-MIDORI2_COI_LONGEST_MARINE_SPECIES_SUBSET2.fasta,phylum;class;order;family;genus;species
-MIDORI2_COI_LONGEST_MARINE_SPECIES_SUBSET3.fasta,phylum;class;order;family;genus;species
-MIDORI2_COI_LONGEST_MARINE_SPECIES_SUBSET4.fasta,phylum;class;order;family;genus;species
-MIDORI2_COI_LONGEST_MARINE_SPECIES_SUBSET5.fasta,phylum;class;order;family;genus;species
+MIDORI2_COI_UNIQ_MARINE_SPECIES.fasta.gz,phylum;class;order;family;genus;species
