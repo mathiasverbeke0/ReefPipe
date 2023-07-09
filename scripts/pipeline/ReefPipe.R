@@ -891,7 +891,12 @@ for(iter in 1:length(paths)){
   
   # Make a read output file
   getN <- function(x){sum(getUniques(x))}
-  track <- cbind(out, sapply(dadaFwd, getN), sapply(dadaRev, getN), sapply(mergers, getN), rowSums(seqtab))
+  
+  if(dim(seqtab)[1] == 1){
+    track <- cbind(out, getN(dadaFwd), getN(dadaRev), getN(mergers), rowSums(seqtab))
+  } else{
+    track <- cbind(out, sapply(dadaFwd, getN), sapply(dadaRev, getN), sapply(mergers, getN), rowSums(seqtab))
+  }
   
   colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "seqtab")
   rownames(track) <- sample.names
